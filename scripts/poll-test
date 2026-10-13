@@ -1,0 +1,21 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: Copyright (C) 2026 David Stainton
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Types keys into `ffi-test echo` through a pseudo-terminal and checks the events it reads.
+set -eu
+cd "$(dirname "$0")/.."
+lake build ffi-test >/dev/null
+out=$( (sleep 0.5; printf 'a\033[A\033[1;5C\033[200~pasted\033[201~q') |
+  script -qfc ".lake/build/bin/ffi-test echo" /dev/null | tr -d '\r')
+expected='CrosstermFfi.Event.key (CrosstermFfi.Key.char '"'a'"') { shift := false, ctrl := false, alt := false }
+CrosstermFfi.Event.key (CrosstermFfi.Key.up) { shift := false, ctrl := false, alt := false }
+CrosstermFfi.Event.key (CrosstermFfi.Key.right) { shift := false, ctrl := true, alt := false }
+CrosstermFfi.Event.paste "pasted"
+CrosstermFfi.Event.key (CrosstermFfi.Key.char '"'q'"') { shift := false, ctrl := false, alt := false }'
+if [ "$out" = "$expected" ]; then
+  echo "ok   poll"
+else
+  printf 'FAIL poll, got:\n%s\n' "$out"
+  exit 1
+fi
