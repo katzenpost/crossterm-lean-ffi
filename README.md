@@ -2,7 +2,7 @@
 
 Terminal control for Lean 4 programs, from the Rust crate
 [crossterm](https://crates.io/crates/crossterm): raw mode, the alternate screen, the cursor,
-the terminal size and input events. The Rust side uses
+the terminal size, mouse capture, focus reporting and input events. The Rust side uses
 [lean-sys](https://github.com/katzenpost/lean-sys) for Lean's object model.
 
 ## Use
