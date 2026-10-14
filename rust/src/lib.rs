@@ -1,12 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (C) 2026 David Stainton
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! crossterm for Lean: raw mode, the alternate screen, the cursor, the terminal size and input
-//! events, as functions with Lean's calling convention. `CrosstermFfi.lean` declares them.
+//! crossterm for Lean: raw mode, the alternate screen, the cursor, the terminal size, mouse
+//! capture, focus reporting and input events, as functions with Lean's calling convention.
+//! `CrosstermFfi.lean` declares them.
 
 #![allow(clippy::missing_safety_doc)]
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
+    MouseEventKind,
+};
 use crossterm::{cursor, execute, terminal};
 use lean_sys::*;
 use std::io::{self, stdout};
@@ -17,6 +21,24 @@ pub mod code {
     pub const KIND_KEY: u32 = 0;
     pub const KIND_RESIZE: u32 = 1;
     pub const KIND_PASTE: u32 = 2;
+    /// A mouse event: `code` is the kind, and the button above `BUTTON_SHIFT`; `width` and
+    /// `height` hold the column and row.
+    pub const KIND_MOUSE: u32 = 3;
+    /// Focus gained (`code` 1) or lost (`code` 0).
+    pub const KIND_FOCUS: u32 = 4;
+
+    pub const MOUSE_DOWN: u32 = 0;
+    pub const MOUSE_UP: u32 = 1;
+    pub const MOUSE_DRAG: u32 = 2;
+    pub const MOUSE_MOVED: u32 = 3;
+    pub const SCROLL_DOWN: u32 = 4;
+    pub const SCROLL_UP: u32 = 5;
+    pub const SCROLL_LEFT: u32 = 6;
+    pub const SCROLL_RIGHT: u32 = 7;
+    pub const BUTTON_SHIFT: u32 = 8;
+    pub const BUTTON_LEFT: u32 = 0;
+    pub const BUTTON_RIGHT: u32 = 1;
+    pub const BUTTON_MIDDLE: u32 = 2;
 
     /// Key codes below this are characters.
     pub const SPECIAL: u32 = 0x11_0000;
@@ -105,7 +127,30 @@ fn modifiers(m: KeyModifiers) -> u32 {
     r
 }
 
-/// The events Lean sees: key presses, resizes and pastes. Others give `None`.
+fn button(b: MouseButton) -> u32 {
+    use code::*;
+    match b {
+        MouseButton::Left => BUTTON_LEFT,
+        MouseButton::Right => BUTTON_RIGHT,
+        MouseButton::Middle => BUTTON_MIDDLE,
+    }
+}
+
+fn mouse_code(k: MouseEventKind) -> u32 {
+    use code::*;
+    match k {
+        MouseEventKind::Down(b) => MOUSE_DOWN | button(b) << BUTTON_SHIFT,
+        MouseEventKind::Up(b) => MOUSE_UP | button(b) << BUTTON_SHIFT,
+        MouseEventKind::Drag(b) => MOUSE_DRAG | button(b) << BUTTON_SHIFT,
+        MouseEventKind::Moved => MOUSE_MOVED,
+        MouseEventKind::ScrollDown => SCROLL_DOWN,
+        MouseEventKind::ScrollUp => SCROLL_UP,
+        MouseEventKind::ScrollLeft => SCROLL_LEFT,
+        MouseEventKind::ScrollRight => SCROLL_RIGHT,
+    }
+}
+
+/// The events Lean sees: key presses, resizes, pastes, the mouse and focus. Others give `None`.
 pub fn encode(e: &Event) -> Option<Raw> {
     match e {
         Event::Key(KeyEvent {
@@ -127,7 +172,24 @@ pub fn encode(e: &Event) -> Option<Raw> {
             text: s.clone(),
             ..Raw::new(code::KIND_PASTE)
         }),
-        _ => None,
+        Event::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: m,
+        }) => Some(Raw {
+            code: mouse_code(*kind),
+            modifiers: modifiers(*m),
+            width: *column as u32,
+            height: *row as u32,
+            ..Raw::new(code::KIND_MOUSE)
+        }),
+        Event::FocusGained => Some(Raw {
+            code: 1,
+            ..Raw::new(code::KIND_FOCUS)
+        }),
+        Event::FocusLost => Some(Raw::new(code::KIND_FOCUS)),
+        Event::Key(_) => None,
     }
 }
 
@@ -169,6 +231,34 @@ pub fn samples() -> Vec<Event> {
     }
     v.push(Event::Resize(80, 24));
     v.push(Event::Paste("hello\nworld".into()));
+    let mouse = |kind, column, row, modifiers| {
+        Event::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers,
+        })
+    };
+    v.push(mouse(MouseEventKind::Down(MouseButton::Left), 3, 4, none));
+    v.push(mouse(
+        MouseEventKind::Up(MouseButton::Right),
+        0,
+        0,
+        KeyModifiers::CONTROL,
+    ));
+    v.push(mouse(
+        MouseEventKind::Drag(MouseButton::Middle),
+        79,
+        23,
+        none,
+    ));
+    v.push(mouse(MouseEventKind::Moved, 1, 2, none));
+    v.push(mouse(MouseEventKind::ScrollDown, 5, 6, none));
+    v.push(mouse(MouseEventKind::ScrollUp, 5, 6, KeyModifiers::SHIFT));
+    v.push(mouse(MouseEventKind::ScrollLeft, 0, 1, none));
+    v.push(mouse(MouseEventKind::ScrollRight, 1, 0, none));
+    v.push(Event::FocusGained);
+    v.push(Event::FocusLost);
     v
 }
 
@@ -247,6 +337,26 @@ pub unsafe extern "C" fn cl_disable_bracketed_paste() -> *mut lean_object {
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn cl_enable_mouse_capture() -> *mut lean_object {
+    io_unit(execute!(stdout(), event::EnableMouseCapture))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cl_disable_mouse_capture() -> *mut lean_object {
+    io_unit(execute!(stdout(), event::DisableMouseCapture))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cl_enable_focus_change() -> *mut lean_object {
+    io_unit(execute!(stdout(), event::EnableFocusChange))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cl_disable_focus_change() -> *mut lean_object {
+    io_unit(execute!(stdout(), event::DisableFocusChange))
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn cl_size() -> *mut lean_object {
     io(terminal::size().map(|(w, h)| {
         let p = lean_alloc_ctor(0, 2, 0);
@@ -315,6 +425,33 @@ mod tests {
             (raws[24].kind, raws[24].text.as_str()),
             (code::KIND_PASTE, "hello\nworld")
         );
+        assert_eq!(
+            (
+                raws[25].kind,
+                raws[25].code,
+                raws[25].width,
+                raws[25].height
+            ),
+            (code::KIND_MOUSE, code::MOUSE_DOWN, 3, 4)
+        );
+        assert_eq!(
+            (raws[26].code, raws[26].modifiers),
+            (
+                code::MOUSE_UP | code::BUTTON_RIGHT << code::BUTTON_SHIFT,
+                code::CTRL
+            )
+        );
+        assert_eq!(
+            raws[27].code,
+            code::MOUSE_DRAG | code::BUTTON_MIDDLE << code::BUTTON_SHIFT
+        );
+        let kinds: Vec<u32> = raws[28..33].iter().map(|r| r.code).collect();
+        assert_eq!(
+            kinds,
+            (code::MOUSE_MOVED..=code::SCROLL_RIGHT).collect::<Vec<_>>()
+        );
+        assert_eq!((raws[33].kind, raws[33].code), (code::KIND_FOCUS, 1));
+        assert_eq!((raws[34].kind, raws[34].code), (code::KIND_FOCUS, 0));
     }
 
     #[test]
@@ -337,6 +474,5 @@ mod tests {
             ))),
             None
         );
-        assert_eq!(encode(&Event::FocusGained), None);
     }
 }

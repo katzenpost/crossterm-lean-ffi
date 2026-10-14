@@ -13,7 +13,16 @@ def expected : List Event :=
    .key (.char 'x') { shift := true, ctrl := true, alt := true }, .key (.char 'é'),
    .key (.char '🦀')] ++
   RawEvent.specialKeys.toList.map (.key ·) ++
-  [.key (.f 1), .key (.f 12), .resize 80 24, .paste "hello\nworld"]
+  [.key (.f 1), .key (.f 12), .resize 80 24, .paste "hello\nworld",
+   .mouse { kind := .down .left, column := 3, row := 4 },
+   .mouse { kind := .up .right, column := 0, row := 0, modifiers := { ctrl := true } },
+   .mouse { kind := .drag .middle, column := 79, row := 23 },
+   .mouse { kind := .moved, column := 1, row := 2 },
+   .mouse { kind := .scrollDown, column := 5, row := 6 },
+   .mouse { kind := .scrollUp, column := 5, row := 6, modifiers := { shift := true } },
+   .mouse { kind := .scrollLeft, column := 0, row := 1 },
+   .mouse { kind := .scrollRight, column := 1, row := 0 },
+   .focus true, .focus false]
 
 def check (name : String) (ok : Bool) : StateT Nat IO Unit := do
   IO.println s!"{if ok then "ok  " else "FAIL"} {name}"
@@ -30,6 +39,8 @@ def tests : StateT Nat IO Unit := do
   check "unknown kind" (raw 9 0).decode.isNone
   check "surrogate code" (raw 0 0xD800).decode.isNone
   check "past the special keys" (raw 0 (RawEvent.special + 15)).decode.isNone
+  check "unknown mouse kind" (raw 3 8).decode.isNone
+  check "unknown mouse button" (raw 3 ((3 : UInt32) <<< 8)).decode.isNone
   -- Without a terminal there is no size to check, only that the call returns.
   match ← size.toBaseIO with
   | .ok (w, h) => check s!"size {w}x{h}" true

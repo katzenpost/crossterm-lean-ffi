@@ -5,8 +5,8 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 /-! # crossterm for Lean
 
-Raw mode, the alternate screen, the cursor, the terminal size and input events, from the Rust
-crate crossterm. The functions are implemented in `rust/src/lib.rs`. -/
+Raw mode, the alternate screen, the cursor, the terminal size, mouse capture, focus reporting
+and input events, from the Rust crate crossterm. The functions are implemented in `rust/src/lib.rs`. -/
 
 namespace CrosstermFfi
 
@@ -37,10 +37,41 @@ structure Modifiers where
   alt : Bool := false
   deriving DecidableEq, Repr, Inhabited
 
+inductive MouseButton where
+  | left
+  | right
+  | middle
+  deriving DecidableEq, Repr, Inhabited
+
+inductive MouseKind where
+  | down (b : MouseButton)
+  | up (b : MouseButton)
+  /-- Moved with `b` held. -/
+  | drag (b : MouseButton)
+  /-- Moved with no button held. -/
+  | moved
+  | scrollDown
+  | scrollUp
+  | scrollLeft
+  | scrollRight
+  deriving DecidableEq, Repr, Inhabited
+
+/-- What the mouse did, and where: the column and row, counting from 0. -/
+structure MouseEvent where
+  kind : MouseKind
+  column : Nat
+  row : Nat
+  modifiers : Modifiers := {}
+  deriving DecidableEq, Repr, Inhabited
+
 inductive Event where
   | key (k : Key) (m : Modifiers := {})
   | resize (width height : Nat)
   | paste (text : String)
+  /-- Only while mouse capture is on. -/
+  | mouse (e : MouseEvent)
+  /-- The window gained or lost the focus; only while focus reporting is on. -/
+  | focus (gained : Bool)
   deriving DecidableEq, Repr, Inhabited
 
 /-- An event as the Rust side builds it. Its codes are those of `code` in `rust/src/lib.rs`. -/
@@ -58,6 +89,8 @@ namespace RawEvent
 def kindKey : UInt32 := 0
 def kindResize : UInt32 := 1
 def kindPaste : UInt32 := 2
+def kindMouse : UInt32 := 3
+def kindFocus : UInt32 := 4
 
 /-- Key codes below this are characters. -/
 def special : UInt32 := 0x110000
@@ -76,10 +109,30 @@ def decodeKey (code : UInt32) : Option Key :=
 def decodeModifiers (m : UInt32) : Modifiers :=
   { shift := m &&& 1 != 0, ctrl := m &&& 2 != 0, alt := m &&& 4 != 0 }
 
+def buttons : Array MouseButton := #[.left, .right, .middle]
+
+def decodeMouse (code : UInt32) : Option MouseKind :=
+  let b := buttons[(code >>> 8).toNat]?
+  match code &&& 0xFF with
+  | 0 => b.map .down
+  | 1 => b.map .up
+  | 2 => b.map .drag
+  | 3 => some .moved
+  | 4 => some .scrollDown
+  | 5 => some .scrollUp
+  | 6 => some .scrollLeft
+  | 7 => some .scrollRight
+  | _ => none
+
 def decode (r : RawEvent) : Option Event :=
   if r.kind == kindKey then (decodeKey r.code).map (.key · (decodeModifiers r.modifiers))
   else if r.kind == kindResize then some (.resize r.width.toNat r.height.toNat)
   else if r.kind == kindPaste then some (.paste r.text)
+  else if r.kind == kindMouse then
+    (decodeMouse r.code).map fun kind =>
+      .mouse { kind, column := r.width.toNat, row := r.height.toNat,
+               modifiers := decodeModifiers r.modifiers }
+  else if r.kind == kindFocus then some (.focus (r.code != 0))
   else none
 
 end RawEvent
@@ -92,6 +145,10 @@ end RawEvent
 @[extern "cl_hide_cursor"] opaque hideCursor : IO Unit
 @[extern "cl_enable_bracketed_paste"] opaque enableBracketedPaste : IO Unit
 @[extern "cl_disable_bracketed_paste"] opaque disableBracketedPaste : IO Unit
+@[extern "cl_enable_mouse_capture"] opaque enableMouseCapture : IO Unit
+@[extern "cl_disable_mouse_capture"] opaque disableMouseCapture : IO Unit
+@[extern "cl_enable_focus_change"] opaque enableFocusChange : IO Unit
+@[extern "cl_disable_focus_change"] opaque disableFocusChange : IO Unit
 
 /-- The terminal's width and height, in cells. -/
 @[extern "cl_size"] opaque size : IO (UInt16 × UInt16)
