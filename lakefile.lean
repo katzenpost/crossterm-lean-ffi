@@ -2,7 +2,7 @@ import Lake
 open Lake DSL System
 
 package «crossterm-lean-ffi» where
-  version := v!"0.1.0"
+  version := v!"0.2.0"
   description := "Terminal control for Lean 4 from the Rust crate crossterm"
   keywords := #["terminal", "tui", "ffi", "rust"]
   license := "AGPL-3.0-only"
