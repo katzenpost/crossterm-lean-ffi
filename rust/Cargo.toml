@@ -1,6 +1,6 @@
 [package]
 name = "crossterm-lean-ffi"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "AGPL-3.0-only"
 publish = false
@@ -11,7 +11,7 @@ crate-type = ["staticlib"]
 
 [dependencies]
 crossterm = "0.29.0"
-lean-sys = { git = "https://github.com/katzenpost/lean-sys", rev = "ac11ff152cc82bccd0ef18f45384ac5acb091260", default-features = false, features = ["mimalloc"] }
+lean-sys = { git = "https://github.com/katzenpost/lean-sys", rev = "7b998184a82d6a6ddcc7626abf5eaac2e5345244", package = "katzenpost-lean-sys", default-features = false, features = ["mimalloc"] }
 
 [profile.release]
 panic = "abort"
